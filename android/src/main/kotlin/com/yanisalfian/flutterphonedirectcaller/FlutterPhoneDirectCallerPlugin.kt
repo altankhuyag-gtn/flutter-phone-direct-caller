@@ -46,13 +46,15 @@ internal class FlutterPhoneDirectCallerHandler :
     private var activityPluginBinding: ActivityPluginBinding? = null
     private var number: String? = null
     private var flutterResult: MethodChannel.Result? = null
+    private var awaitingPermissionResult = false
     fun setActivityPluginBinding(activityPluginBinding: ActivityPluginBinding) {
         this.activityPluginBinding = activityPluginBinding
         activityPluginBinding.addRequestPermissionsResultListener(this)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        flutterResult = result
+        flutterResult = null
+        awaitingPermissionResult = false
         if (call.method == "callNumber") {
             number = call.argument("number")
             Log.d("Caller", "Message")
@@ -61,6 +63,8 @@ internal class FlutterPhoneDirectCallerHandler :
                 number = String.format("tel:%s", number)
             }
             if (permissionStatus != 1) {
+                flutterResult = result
+                awaitingPermissionResult = true
                 requestsPermission()
             } else {
                 result.success(callNumber(number))
@@ -75,18 +79,23 @@ internal class FlutterPhoneDirectCallerHandler :
         permissions: Array<String>,
         grantResults: IntArray
     ): Boolean {
-        number?.let {
-            if (requestCode == CALL_REQ_CODE) {
-                for (r in grantResults) {
-                    if (r == PackageManager.PERMISSION_DENIED) {
-                        flutterResult!!.success(false)
-                        return false
-                    }
-                }
-                flutterResult!!.success(callNumber(number))
+        if (requestCode != CALL_REQ_CODE || !awaitingPermissionResult) {
+            return false
+        }
+        val pendingResult = flutterResult
+        awaitingPermissionResult = false
+        flutterResult = null
+        if (pendingResult == null) {
+            return false
+        }
+        for (r in grantResults) {
+            if (r == PackageManager.PERMISSION_DENIED) {
+                pendingResult.success(false)
+                return false
             }
         }
-        return true
+        pendingResult.success(callNumber(number))
+        return false
     }
 
     private fun requestsPermission() {
